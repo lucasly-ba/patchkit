@@ -1,6 +1,6 @@
 //! Comprehensive tests for quilt series lossless parser and editor
 
-use crate::edit::quilt::{self, SeriesFile};
+use crate::edit::series::{self, SeriesFile};
 use rowan::ast::AstNode;
 use std::sync::Arc;
 use std::thread;
@@ -8,7 +8,7 @@ use std::thread;
 #[test]
 fn test_empty_series_edge_cases() {
     // Test completely empty input
-    let parsed = quilt::parse("");
+    let parsed = series::parse("");
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
     assert_eq!(series.entries().count(), 0);
@@ -16,7 +16,7 @@ fn test_empty_series_edge_cases() {
     assert_eq!(series.comment_lines().count(), 0);
 
     // Test whitespace-only input
-    let parsed = quilt::parse("   \n\t  \n   ");
+    let parsed = series::parse("   \n\t  \n   ");
     if !parsed.errors().is_empty() {
         eprintln!("Errors for whitespace-only input: {:?}", parsed.errors());
     }
@@ -26,7 +26,7 @@ fn test_empty_series_edge_cases() {
     assert_eq!(series.patch_entries().count(), 0);
 
     // Test only newlines
-    let parsed = quilt::parse("\n\n\n");
+    let parsed = series::parse("\n\n\n");
     if !parsed.errors().is_empty() {
         eprintln!("Errors for newlines-only input: {:?}", parsed.errors());
     }
@@ -38,14 +38,14 @@ fn test_empty_series_edge_cases() {
 #[test]
 fn test_malformed_input_error_recovery() {
     // Test missing patch name - should either error or skip gracefully
-    let parsed = quilt::parse("   -p1\n");
+    let parsed = series::parse("   -p1\n");
     let series = parsed.quilt_tree();
     // Either should have errors, or should skip the malformed line
     let patches: Vec<_> = series.patch_entries().collect();
     assert!(parsed.errors().len() > 0 || patches.is_empty());
 
     // Test incomplete comment
-    let parsed = quilt::parse("#\n");
+    let parsed = series::parse("#\n");
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
     let comments: Vec<_> = series.comment_lines().collect();
@@ -53,7 +53,7 @@ fn test_malformed_input_error_recovery() {
     assert_eq!(comments[0].text(), "");
 
     // Test mixed valid/invalid lines
-    let parsed = quilt::parse("patch1.patch\n   \npatch2.patch\n");
+    let parsed = series::parse("patch1.patch\n   \npatch2.patch\n");
     if !parsed.errors().is_empty() {
         eprintln!("Errors for mixed valid/invalid: {:?}", parsed.errors());
     }
@@ -75,7 +75,7 @@ patch1.patch    	 -p1     --reverse
 # Footer with tabs	and	spaces  
 "#;
 
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let series = parsed.quilt_tree();
 
     // Verify exact roundtrip preservation
@@ -99,7 +99,7 @@ patch1.patch    	 -p1     --reverse
 fn test_unicode_and_special_characters() {
     let text = "# Pätch sériès with ünïcødé\npatch-ñame.patch\n# Comment with émojis 🚀\nspëcial-patch.patch -p1\n";
 
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
 
@@ -130,7 +130,7 @@ fn test_large_series_performance() {
 
     // Test parsing performance
     let start = std::time::Instant::now();
-    let parsed = quilt::parse(&text);
+    let parsed = series::parse(&text);
     let parse_time = start.elapsed();
     println!("Parse time for 1000 patches: {:?}", parse_time);
 
@@ -150,7 +150,7 @@ fn test_large_series_performance() {
 #[test]
 fn test_thread_safety_and_concurrent_access() {
     let text = "patch1.patch\npatch2.patch -p1\n# Comment\npatch3.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
 
     // Use GreenNode for thread safety (Arc internally)
     let green_node = parsed.green().clone();
@@ -205,7 +205,7 @@ fn test_thread_safety_and_concurrent_access() {
 #[test]
 fn test_error_conditions_and_edge_cases() {
     // Test operations on non-existent patches
-    let parsed = quilt::parse("patch1.patch\npatch2.patch\n");
+    let parsed = series::parse("patch1.patch\npatch2.patch\n");
     let mut series = parsed.quilt_tree_mut();
 
     // Try to remove non-existent patch
@@ -230,7 +230,7 @@ patch2.patch --binary --unified=5
 patch3.patch -p0 -R -F3 --posix
 "#;
 
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let series = parsed.quilt_tree();
     let patches: Vec<_> = series.patch_entries().collect();
 
@@ -247,7 +247,7 @@ patch3.patch -p0 -R -F3 --posix
 
 #[test]
 fn test_patch_name_modification() {
-    let parsed = quilt::parse("old-name.patch -p1\n");
+    let parsed = series::parse("old-name.patch -p1\n");
     let series = parsed.quilt_tree_mut();
     let patches: Vec<_> = series.patch_entries().collect();
 
@@ -266,7 +266,7 @@ fn test_patch_name_modification() {
 
 #[test]
 fn test_builder_comprehensive() {
-    let series = quilt::SeriesBuilder::new()
+    let series = series::SeriesBuilder::new()
         .add_comment("Generated series file")
         .add_comment("") // Empty comment
         .add_patch("001-fix.patch", vec![])
@@ -307,13 +307,13 @@ patch3.patch
 "#;
 
     // Parse -> modify -> serialize -> parse again
-    let parsed1 = quilt::parse(original_text);
+    let parsed1 = series::parse(original_text);
     let mut series1 = parsed1.quilt_tree_mut();
 
     series1.insert(1, "inserted.patch", vec!["-p0".to_string()]);
     let serialized = series1.syntax().to_string();
 
-    let parsed2 = quilt::parse(&serialized);
+    let parsed2 = series::parse(&serialized);
     let series2 = parsed2.quilt_tree();
 
     // Verify structure is consistent
@@ -331,7 +331,7 @@ patch3.patch
 fn test_memory_efficiency() {
     // Test that modifications create minimal allocations using in-place modification
     let text = "patch1.patch\npatch2.patch\npatch3.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let mut series = parsed.quilt_tree_mut(); // Use mutable tree for in-place modification
 
     // Get the green node (shared representation)
@@ -347,7 +347,7 @@ fn test_memory_efficiency() {
     assert_eq!(series.patch_entries().count(), 4);
 
     // Parse the modified syntax to get a new green node
-    let parsed_modified = quilt::parse(&series.syntax().to_string());
+    let parsed_modified = series::parse(&series.syntax().to_string());
     let green2 = parsed_modified.green();
 
     // Green nodes should be different after modification

@@ -1,7 +1,6 @@
 //! Lossless AST structures for patch files
 use crate::edit::lex::SyntaxKind;
 use rowan::{ast::AstNode, SyntaxNode, SyntaxToken};
-use std::fmt;
 
 /// Language definition for patch file syntax
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,32 +35,7 @@ pub enum DiffFormat {
     Normal,
 }
 
-/// Parse error containing a list of error messages
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ParseError(pub Vec<String>);
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, err) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, "\n")?;
-            }
-            write!(f, "{}", err)?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-/// Parse error with position information
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionedParseError {
-    /// The error message
-    pub message: String,
-    /// The position in the source text where the error occurred
-    pub position: rowan::TextRange,
-}
+pub use super::{ParseError, PositionedParseError};
 
 macro_rules! ast_node {
     ($name:ident, $kind:expr) => {
@@ -191,6 +165,38 @@ impl PatchFile {
         self.syntax().children().find_map(NewFile::cast)
     }
 
+    /// Get the old file path.
+    pub fn old_path(&self) -> Option<String> {
+        self.old_file()
+            .and_then(|f| f.path())
+            .map(|t| t.text().to_string())
+    }
+
+    /// Get the new file path.
+    pub fn new_path(&self) -> Option<String> {
+        self.new_file()
+            .and_then(|f| f.path())
+            .map(|t| t.text().to_string())
+    }
+
+    /// Get the file path, preferring the new file name.
+    pub fn path(&self) -> Option<String> {
+        self.new_path().or_else(|| self.old_path())
+    }
+
+    /// Get a display name for this file diff.
+    ///
+    /// Shows "old → new" if the paths differ, otherwise just the path.
+    pub fn display_name(&self) -> String {
+        match (self.old_path(), self.new_path()) {
+            (Some(o), Some(n)) if o == n => o,
+            (Some(o), Some(n)) => format!("{o} → {n}"),
+            (Some(o), None) => o,
+            (None, Some(n)) => n,
+            (None, None) => "<unknown>".to_string(),
+        }
+    }
+
     /// Get all hunks in this patch file
     pub fn hunks(&self) -> impl Iterator<Item = Hunk> {
         self.syntax().children().filter_map(Hunk::cast)
@@ -217,6 +223,17 @@ impl NewFile {
     }
 }
 
+/// Line count statistics for a hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HunkStats {
+    /// Number of context (unchanged) lines
+    pub context: u32,
+    /// Number of added lines
+    pub additions: u32,
+    /// Number of deleted lines
+    pub deletions: u32,
+}
+
 impl Hunk {
     /// Get the hunk header
     pub fn header(&self) -> Option<HunkHeader> {
@@ -225,17 +242,61 @@ impl Hunk {
 
     /// Get all lines in this hunk
     pub fn lines(&self) -> impl Iterator<Item = HunkLine> {
-        // HunkLine is not a real syntax kind - the actual kinds are CONTEXT_LINE, ADD_LINE, DELETE_LINE
-        // But they all share the same structure, so we can cast any of them as HunkLine
-        self.syntax().children().filter_map(|child| {
-            match child.kind() {
+        self.syntax()
+            .children()
+            .filter_map(|child| match child.kind() {
                 SyntaxKind::CONTEXT_LINE | SyntaxKind::ADD_LINE | SyntaxKind::DELETE_LINE => {
-                    // These line types all have the same structure, cast them as HunkLine
                     Some(HunkLine { syntax: child })
                 }
                 _ => None,
+            })
+    }
+
+    /// Fix the line counts in the hunk header to match the actual content.
+    ///
+    /// Returns `true` if any counts were changed.
+    pub fn fix_counts(&self) -> bool {
+        let Some(header) = self.header() else {
+            return false;
+        };
+        let stats = self.stats();
+        let mut changed = false;
+
+        if let Some(old_range) = header.old_range() {
+            let actual = stats.context + stats.deletions;
+            if old_range.count() != Some(actual) {
+                old_range.set_count(actual);
+                changed = true;
             }
-        })
+        }
+
+        if let Some(new_range) = header.new_range() {
+            let actual = stats.context + stats.additions;
+            if new_range.count() != Some(actual) {
+                new_range.set_count(actual);
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
+    /// Count the lines in this hunk by type.
+    pub fn stats(&self) -> HunkStats {
+        let mut stats = HunkStats {
+            context: 0,
+            additions: 0,
+            deletions: 0,
+        };
+        for line in self.lines() {
+            match line.syntax().kind() {
+                SyntaxKind::CONTEXT_LINE => stats.context += 1,
+                SyntaxKind::ADD_LINE => stats.additions += 1,
+                SyntaxKind::DELETE_LINE => stats.deletions += 1,
+                _ => {}
+            }
+        }
+        stats
     }
 }
 
@@ -248,6 +309,72 @@ impl HunkHeader {
     /// Get the new file range for this hunk
     pub fn new_range(&self) -> Option<HunkRange> {
         self.syntax().children().filter_map(HunkRange::cast).nth(1)
+    }
+}
+
+/// Which side of a diff hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HunkSide {
+    /// The old (original) side
+    Old,
+    /// The new (modified) side
+    New,
+}
+
+impl std::fmt::Display for HunkSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HunkSide::Old => write!(f, "old"),
+            HunkSide::New => write!(f, "new"),
+        }
+    }
+}
+
+/// A mismatch between a hunk header's declared line count and the actual count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkCountMismatch {
+    /// Which side of the diff
+    pub side: HunkSide,
+    /// The count declared in the header
+    pub expected: u32,
+    /// The actual count of lines in the hunk
+    pub actual: u32,
+}
+
+impl HunkHeader {
+    /// Check whether the declared line counts match the actual hunk content.
+    ///
+    /// Returns a list of mismatches (empty if everything matches).
+    /// Requires the parent `Hunk` node to count the lines.
+    pub fn check_counts(&self, hunk: &Hunk) -> Vec<HunkCountMismatch> {
+        let stats = hunk.stats();
+        let mut mismatches = Vec::new();
+
+        if let Some(old_range) = self.old_range() {
+            let expected = old_range.count().unwrap_or(1);
+            let actual = stats.context + stats.deletions;
+            if expected != actual {
+                mismatches.push(HunkCountMismatch {
+                    side: HunkSide::Old,
+                    expected,
+                    actual,
+                });
+            }
+        }
+
+        if let Some(new_range) = self.new_range() {
+            let expected = new_range.count().unwrap_or(1);
+            let actual = stats.context + stats.additions;
+            if expected != actual {
+                mismatches.push(HunkCountMismatch {
+                    side: HunkSide::New,
+                    expected,
+                    actual,
+                });
+            }
+        }
+
+        mismatches
     }
 }
 
@@ -269,6 +396,55 @@ impl HunkRange {
             .filter(|token| token.kind() == SyntaxKind::NUMBER)
             .nth(1)
             .and_then(|token| token.text().parse().ok())
+    }
+
+    /// Set the line count, modifying the syntax tree in place.
+    ///
+    /// If the range already has a `,count` part, replaces the count token.
+    /// If it only has a start number, inserts `,count` after it.
+    pub fn set_count(&self, new_count: u32) {
+        let count_str = new_count.to_string();
+
+        // Build a replacement NUMBER token
+        let new_token = Self::make_token(SyntaxKind::NUMBER, &count_str);
+
+        // Find the second NUMBER token (the count)
+        let mut number_indices = Vec::new();
+        for (index, element) in self.syntax().children_with_tokens().enumerate() {
+            if let rowan::NodeOrToken::Token(token) = element {
+                if token.kind() == SyntaxKind::NUMBER {
+                    number_indices.push(index);
+                }
+            }
+        }
+
+        if number_indices.len() >= 2 {
+            // Replace the existing count token
+            let idx = number_indices[1];
+            self.syntax()
+                .splice_children(idx..idx + 1, vec![rowan::NodeOrToken::Token(new_token)]);
+        } else if !number_indices.is_empty() {
+            // No count yet - insert comma + count after the start number
+            let insert_at = number_indices[0] + 1;
+            let comma_token = Self::make_token(SyntaxKind::COMMA, ",");
+            self.syntax().splice_children(
+                insert_at..insert_at,
+                vec![
+                    rowan::NodeOrToken::Token(comma_token),
+                    rowan::NodeOrToken::Token(new_token),
+                ],
+            );
+        }
+    }
+
+    fn make_token(kind: SyntaxKind, text: &str) -> rowan::SyntaxToken<Lang> {
+        let mut builder = rowan::GreenNodeBuilder::new();
+        builder.start_node(SyntaxKind::ROOT.into());
+        builder.token(kind.into(), text);
+        builder.finish_node();
+        let green = builder.finish();
+        let node = SyntaxNode::new_root_mut(green);
+        node.first_token().unwrap()
     }
 }
 
@@ -483,8 +659,110 @@ impl NormalHunk {
 }
 
 /// Parse a patch file from text
-pub fn parse(text: &str) -> crate::parse::Parse<Patch> {
+pub fn parse(text: &str) -> super::Parse<Patch> {
     let tokens = super::lex::lex(text);
     let parser = super::parse::Parser::new(tokens);
     parser.parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fix_counts_correct() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        assert!(!hunk.fix_counts());
+        assert_eq!(patch.syntax().to_string(), text);
+    }
+
+    #[test]
+    fn test_fix_counts_wrong_old() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,99 +1,2 @@\n ctx\n-old\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        assert!(hunk.fix_counts());
+        assert_eq!(
+            patch.syntax().to_string(),
+            "--- a/f\n+++ b/f\n@@ -1,2 +1,1 @@\n ctx\n-old\n"
+        );
+    }
+
+    #[test]
+    fn test_fix_counts_no_count_present() {
+        let text = "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new1\n+new2\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        assert!(hunk.fix_counts());
+        assert_eq!(
+            patch.syntax().to_string(),
+            "--- a/f\n+++ b/f\n@@ -1,1 +1,2 @@\n-old\n+new1\n+new2\n"
+        );
+    }
+
+    #[test]
+    fn test_set_count_replace() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n ctx\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        let header = hunk.header().unwrap();
+        header.old_range().unwrap().set_count(42);
+        assert_eq!(
+            patch.syntax().to_string(),
+            "--- a/f\n+++ b/f\n@@ -1,42 +1,5 @@\n ctx\n"
+        );
+    }
+
+    #[test]
+    fn test_hunk_stats() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,4 +1,5 @@\n ctx1\n ctx2\n-del\n+add1\n+add2\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        let stats = hunk.stats();
+        assert_eq!(stats.context, 2);
+        assert_eq!(stats.deletions, 1);
+        assert_eq!(stats.additions, 2);
+    }
+
+    #[test]
+    fn test_check_counts_mismatch() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,99 +1,99 @@\n ctx\n-old\n+new\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        let mismatches = hunk.header().unwrap().check_counts(&hunk);
+        assert_eq!(mismatches.len(), 2);
+        assert_eq!(mismatches[0].side, HunkSide::Old);
+        assert_eq!(mismatches[0].expected, 99);
+        assert_eq!(mismatches[0].actual, 2);
+        assert_eq!(mismatches[1].side, HunkSide::New);
+        assert_eq!(mismatches[1].expected, 99);
+        assert_eq!(mismatches[1].actual, 2);
+    }
+
+    #[test]
+    fn test_patch_file_display_name() {
+        let text = "--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-a\n+b\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let file = patch.patch_files().next().unwrap();
+        assert_eq!(file.display_name(), "a/old.txt → b/new.txt");
+    }
+
+    #[test]
+    fn test_patch_file_display_name_same() {
+        let text = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-a\n+b\n";
+        let parsed = parse(text);
+        let patch = parsed.tree();
+        let file = patch.patch_files().next().unwrap();
+        // Paths differ (a/file.txt vs b/file.txt), so shows arrow
+        assert_eq!(file.display_name(), "a/file.txt → b/file.txt");
+    }
 }

@@ -8,34 +8,26 @@ pub mod lossless;
 mod parse;
 
 pub use lossless::{
-    CommentLine, OptionItem, Options, PatchEntry, QuiltLang, SeriesEntry, SeriesFile,
+    CommentLine, OptionItem, Options, PatchEntry, SeriesEntry, SeriesFile, SeriesLang,
 };
 
 use rowan::{ast::AstNode, TextRange};
 
 /// Parse a quilt series file into a lossless AST
-pub fn parse(text: &str) -> crate::parse::Parse<SeriesFile> {
+pub fn parse(text: &str) -> crate::edit::Parse<SeriesFile> {
     lossless::parse(text)
 }
 
 /// Extension methods for quilt Parse results
-impl crate::parse::Parse<SeriesFile> {
+impl crate::edit::Parse<SeriesFile> {
     /// Get the parsed quilt series tree
     pub fn quilt_tree(&self) -> SeriesFile {
-        let green = self.green().clone();
-        SeriesFile::new_root(green)
+        self.tree()
     }
 
     /// Get a mutable quilt series tree for editing
     pub fn quilt_tree_mut(&self) -> SeriesFile {
-        let green = self.green().clone();
-        SeriesFile::new_root_mut(green)
-    }
-
-    /// Get a mutable root for the quilt tree
-    pub fn quilt_root_mut(&self) -> rowan::SyntaxNode<QuiltLang> {
-        let green = self.green().clone();
-        rowan::SyntaxNode::new_root_mut(green)
+        self.tree()
     }
 }
 

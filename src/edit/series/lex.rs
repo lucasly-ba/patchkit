@@ -49,8 +49,6 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 /// Lexer for quilt series files
 pub struct Lexer<'a> {
     input: &'a str,
-    chars: std::str::Chars<'a>,
-    pos: usize,       // character position for logic
     byte_pos: usize,  // byte position for slicing
     in_comment: bool, // track if we're inside a comment line
 }
@@ -60,15 +58,13 @@ impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
-            chars: input.chars(),
-            pos: 0,
             byte_pos: 0,
             in_comment: false,
         }
     }
 
     /// Tokenize the entire input
-    pub fn tokenize(&mut self) -> Vec<(SyntaxKind, String)> {
+    pub fn tokenize(&mut self) -> Vec<(SyntaxKind, &'a str)> {
         let mut tokens = Vec::new();
 
         while self.byte_pos < self.input.len() {
@@ -76,37 +72,39 @@ impl<'a> Lexer<'a> {
             tokens.push(token);
         }
 
-        tokens.push((SyntaxKind::EOF, String::new()));
+        tokens.push((SyntaxKind::EOF, ""));
         tokens
     }
 
-    fn next_token(&mut self) -> (SyntaxKind, String) {
+    fn next_token(&mut self) -> (SyntaxKind, &'a str) {
         let ch = self.current_char();
 
         match ch {
             Some('#') => {
+                let start = self.byte_pos;
                 self.advance();
                 self.in_comment = true;
-                (SyntaxKind::HASH, "#".to_string())
+                (SyntaxKind::HASH, &self.input[start..self.byte_pos])
             }
             Some(' ') => {
+                let start = self.byte_pos;
                 self.advance();
-                (SyntaxKind::SPACE, " ".to_string())
+                (SyntaxKind::SPACE, &self.input[start..self.byte_pos])
             }
             Some('\t') => {
+                let start = self.byte_pos;
                 self.advance();
-                (SyntaxKind::TAB, "\t".to_string())
+                (SyntaxKind::TAB, &self.input[start..self.byte_pos])
             }
             Some('\n') => {
+                let start = self.byte_pos;
                 self.advance();
-                self.in_comment = false; // reset comment state at end of line
-                (SyntaxKind::NEWLINE, "\n".to_string())
+                self.in_comment = false;
+                (SyntaxKind::NEWLINE, &self.input[start..self.byte_pos])
             }
             Some(_) => {
-                // If we're in a comment, everything is text
                 if self.in_comment {
                     self.read_text()
-                // Check if we're at the start of a line or after whitespace
                 } else if self.at_line_start() || self.prev_is_whitespace() {
                     if self.peek_option() {
                         self.read_option()
@@ -117,24 +115,23 @@ impl<'a> Lexer<'a> {
                     self.read_text()
                 }
             }
-            None => (SyntaxKind::ERROR, String::new()),
+            None => (SyntaxKind::ERROR, ""),
         }
     }
 
     fn current_char(&self) -> Option<char> {
-        self.chars.as_str().chars().next()
+        self.input[self.byte_pos..].chars().next()
     }
 
     fn advance(&mut self) {
-        if let Some(ch) = self.chars.next() {
+        if let Some(ch) = self.input[self.byte_pos..].chars().next() {
             self.byte_pos += ch.len_utf8();
-            self.pos += 1;
         }
     }
 
     fn at_line_start(&self) -> bool {
-        self.pos == 0
-            || (self.byte_pos > 0 && self.input[..self.byte_pos].chars().last() == Some('\n'))
+        self.byte_pos == 0
+            || (self.byte_pos > 0 && self.input.as_bytes().get(self.byte_pos - 1) == Some(&b'\n'))
     }
 
     fn prev_is_whitespace(&self) -> bool {
@@ -142,22 +139,18 @@ impl<'a> Lexer<'a> {
             return false;
         }
         matches!(
-            self.input[..self.byte_pos].chars().last(),
-            Some(' ') | Some('\t')
+            self.input.as_bytes().get(self.byte_pos - 1),
+            Some(b' ') | Some(b'\t')
         )
     }
 
     fn peek_option(&self) -> bool {
-        match self.current_char() {
-            Some('-') => true,
-            _ => false,
-        }
+        matches!(self.current_char(), Some('-'))
     }
 
-    fn read_option(&mut self) -> (SyntaxKind, String) {
+    fn read_option(&mut self) -> (SyntaxKind, &'a str) {
         let start_byte = self.byte_pos;
 
-        // Read until whitespace or newline
         while let Some(ch) = self.current_char() {
             if ch == ' ' || ch == '\t' || ch == '\n' {
                 break;
@@ -165,14 +158,12 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
 
-        let text = self.input[start_byte..self.byte_pos].to_string();
-        (SyntaxKind::OPTION, text)
+        (SyntaxKind::OPTION, &self.input[start_byte..self.byte_pos])
     }
 
-    fn read_patch_name(&mut self) -> (SyntaxKind, String) {
+    fn read_patch_name(&mut self) -> (SyntaxKind, &'a str) {
         let start_byte = self.byte_pos;
 
-        // Read until whitespace or newline
         while let Some(ch) = self.current_char() {
             if ch == ' ' || ch == '\t' || ch == '\n' {
                 break;
@@ -180,14 +171,15 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
 
-        let text = self.input[start_byte..self.byte_pos].to_string();
-        (SyntaxKind::PATCH_NAME, text)
+        (
+            SyntaxKind::PATCH_NAME,
+            &self.input[start_byte..self.byte_pos],
+        )
     }
 
-    fn read_text(&mut self) -> (SyntaxKind, String) {
+    fn read_text(&mut self) -> (SyntaxKind, &'a str) {
         let start_byte = self.byte_pos;
 
-        // Read until newline
         while let Some(ch) = self.current_char() {
             if ch == '\n' {
                 break;
@@ -195,8 +187,7 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
 
-        let text = self.input[start_byte..self.byte_pos].to_string();
-        (SyntaxKind::TEXT, text)
+        (SyntaxKind::TEXT, &self.input[start_byte..self.byte_pos])
     }
 }
 
