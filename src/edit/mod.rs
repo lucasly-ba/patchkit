@@ -90,6 +90,11 @@ pub struct Parse<T> {
     _ty: PhantomData<T>,
 }
 
+// SAFETY: Parse<T> only contains a GreenNode (which is Arc-based and thread-safe),
+// Vec<String>, and PhantomData. The PhantomData<T> does not actually hold a T.
+unsafe impl<T> Send for Parse<T> {}
+unsafe impl<T> Sync for Parse<T> {}
+
 impl<T> Parse<T> {
     /// Create a new parse result
     pub fn new(green: GreenNode, errors: Vec<String>) -> Self {
