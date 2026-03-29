@@ -686,8 +686,10 @@ mod tests {
         let patch = parsed.tree_lossy();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         assert!(hunk.fix_counts());
-        let result = patch.syntax().to_string();
-        assert!(result.contains("@@ -1,2 +1,1 @@"), "got: {result}");
+        assert_eq!(
+            patch.syntax().to_string(),
+            "--- a/f\n+++ b/f\n@@ -1,2 +1,1 @@\n ctx\n-old\n"
+        );
     }
 
     #[test]
@@ -697,9 +699,10 @@ mod tests {
         let patch = parsed.tree_lossy();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         assert!(hunk.fix_counts());
-        let result = patch.syntax().to_string();
-        assert!(result.contains("-1,1"), "got: {result}");
-        assert!(result.contains("+1,2"), "got: {result}");
+        assert_eq!(
+            patch.syntax().to_string(),
+            "--- a/f\n+++ b/f\n@@ -1,1 +1,2 @@\n-old\n+new1\n+new2\n"
+        );
     }
 
     #[test]
@@ -710,8 +713,10 @@ mod tests {
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         let header = hunk.header().unwrap();
         header.old_range().unwrap().set_count(42);
-        let result = patch.syntax().to_string();
-        assert!(result.contains("-1,42"), "got: {result}");
+        assert_eq!(
+            patch.syntax().to_string(),
+            "--- a/f\n+++ b/f\n@@ -1,42 +1,5 @@\n ctx\n"
+        );
     }
 
     #[test]
