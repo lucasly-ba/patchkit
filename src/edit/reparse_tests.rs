@@ -202,7 +202,7 @@ fn test_reparse_roundtrip_text_preserved() {
     );
 
     let incremental = parsed.reparse(&new_text, edit_range, edit::series::parse);
-    let tree = incremental.tree_lossy();
+    let tree = incremental.tree();
 
     use rowan::ast::AstNode;
     assert_eq!(tree.syntax().to_string(), new_text);

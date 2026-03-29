@@ -22,12 +22,12 @@ pub fn parse(text: &str) -> crate::edit::Parse<SeriesFile> {
 impl crate::edit::Parse<SeriesFile> {
     /// Get the parsed quilt series tree
     pub fn quilt_tree(&self) -> SeriesFile {
-        self.tree_lossy()
+        self.tree()
     }
 
     /// Get a mutable quilt series tree for editing
     pub fn quilt_tree_mut(&self) -> SeriesFile {
-        self.tree_lossy()
+        self.tree()
     }
 }
 

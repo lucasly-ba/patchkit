@@ -673,7 +673,7 @@ mod tests {
     fn test_fix_counts_correct() {
         let text = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         assert!(!hunk.fix_counts());
         assert_eq!(patch.syntax().to_string(), text);
@@ -683,7 +683,7 @@ mod tests {
     fn test_fix_counts_wrong_old() {
         let text = "--- a/f\n+++ b/f\n@@ -1,99 +1,2 @@\n ctx\n-old\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         assert!(hunk.fix_counts());
         assert_eq!(
@@ -696,7 +696,7 @@ mod tests {
     fn test_fix_counts_no_count_present() {
         let text = "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new1\n+new2\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         assert!(hunk.fix_counts());
         assert_eq!(
@@ -709,7 +709,7 @@ mod tests {
     fn test_set_count_replace() {
         let text = "--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n ctx\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         let header = hunk.header().unwrap();
         header.old_range().unwrap().set_count(42);
@@ -723,7 +723,7 @@ mod tests {
     fn test_hunk_stats() {
         let text = "--- a/f\n+++ b/f\n@@ -1,4 +1,5 @@\n ctx1\n ctx2\n-del\n+add1\n+add2\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         let stats = hunk.stats();
         assert_eq!(stats.context, 2);
@@ -735,7 +735,7 @@ mod tests {
     fn test_check_counts_mismatch() {
         let text = "--- a/f\n+++ b/f\n@@ -1,99 +1,99 @@\n ctx\n-old\n+new\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
         let mismatches = hunk.header().unwrap().check_counts(&hunk);
         assert_eq!(mismatches.len(), 2);
@@ -751,7 +751,7 @@ mod tests {
     fn test_patch_file_display_name() {
         let text = "--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-a\n+b\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let file = patch.patch_files().next().unwrap();
         assert_eq!(file.display_name(), "a/old.txt → b/new.txt");
     }
@@ -760,7 +760,7 @@ mod tests {
     fn test_patch_file_display_name_same() {
         let text = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-a\n+b\n";
         let parsed = parse(text);
-        let patch = parsed.tree_lossy();
+        let patch = parsed.tree();
         let file = patch.patch_files().next().unwrap();
         // Paths differ (a/file.txt vs b/file.txt), so shows arrow
         assert_eq!(file.display_name(), "a/file.txt → b/file.txt");

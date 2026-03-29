@@ -166,22 +166,12 @@ impl<T> Parse<T> {
         }
     }
 
-    /// Get the parsed syntax tree, panicking if there are errors
+    /// Get the parsed syntax tree.
+    ///
+    /// Returns the tree even if there are parse errors, enabling
+    /// error-resilient tooling that works with partial/invalid input.
+    /// Use `errors()` or `positioned_errors()` to check for errors.
     pub fn tree(&self) -> T
-    where
-        T: AstNode,
-    {
-        assert!(
-            self.errors.is_empty() && self.positioned_errors.is_empty(),
-            "tried to get tree with errors: {:?}",
-            self.errors
-        );
-        let node = SyntaxNode::<T::Language>::new_root(self.green.clone());
-        T::cast(node).expect("root node has wrong type")
-    }
-
-    /// Get the parsed syntax tree even if there are parse errors
-    pub fn tree_lossy(&self) -> T
     where
         T: AstNode,
     {
