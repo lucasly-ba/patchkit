@@ -252,6 +252,35 @@ impl Hunk {
             })
     }
 
+    /// Fix the line counts in the hunk header to match the actual content.
+    ///
+    /// Returns `true` if any counts were changed.
+    pub fn fix_counts(&self) -> bool {
+        let Some(header) = self.header() else {
+            return false;
+        };
+        let stats = self.stats();
+        let mut changed = false;
+
+        if let Some(old_range) = header.old_range() {
+            let actual = stats.context + stats.deletions;
+            if old_range.count() != Some(actual) {
+                old_range.set_count(actual);
+                changed = true;
+            }
+        }
+
+        if let Some(new_range) = header.new_range() {
+            let actual = stats.context + stats.additions;
+            if new_range.count() != Some(actual) {
+                new_range.set_count(actual);
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
     /// Count the lines in this hunk by type.
     pub fn stats(&self) -> HunkStats {
         let mut stats = HunkStats {
@@ -367,6 +396,55 @@ impl HunkRange {
             .filter(|token| token.kind() == SyntaxKind::NUMBER)
             .nth(1)
             .and_then(|token| token.text().parse().ok())
+    }
+
+    /// Set the line count, modifying the syntax tree in place.
+    ///
+    /// If the range already has a `,count` part, replaces the count token.
+    /// If it only has a start number, inserts `,count` after it.
+    pub fn set_count(&self, new_count: u32) {
+        let count_str = new_count.to_string();
+
+        // Build a replacement NUMBER token
+        let new_token = Self::make_token(SyntaxKind::NUMBER, &count_str);
+
+        // Find the second NUMBER token (the count)
+        let mut number_indices = Vec::new();
+        for (index, element) in self.syntax().children_with_tokens().enumerate() {
+            if let rowan::NodeOrToken::Token(token) = element {
+                if token.kind() == SyntaxKind::NUMBER {
+                    number_indices.push(index);
+                }
+            }
+        }
+
+        if number_indices.len() >= 2 {
+            // Replace the existing count token
+            let idx = number_indices[1];
+            self.syntax()
+                .splice_children(idx..idx + 1, vec![rowan::NodeOrToken::Token(new_token)]);
+        } else if !number_indices.is_empty() {
+            // No count yet - insert comma + count after the start number
+            let insert_at = number_indices[0] + 1;
+            let comma_token = Self::make_token(SyntaxKind::COMMA, ",");
+            self.syntax().splice_children(
+                insert_at..insert_at,
+                vec![
+                    rowan::NodeOrToken::Token(comma_token),
+                    rowan::NodeOrToken::Token(new_token),
+                ],
+            );
+        }
+    }
+
+    fn make_token(kind: SyntaxKind, text: &str) -> rowan::SyntaxToken<Lang> {
+        let mut builder = rowan::GreenNodeBuilder::new();
+        builder.start_node(SyntaxKind::ROOT.into());
+        builder.token(kind.into(), text);
+        builder.finish_node();
+        let green = builder.finish();
+        let node = SyntaxNode::new_root_mut(green);
+        node.first_token().unwrap()
     }
 }
 
@@ -585,4 +663,101 @@ pub fn parse(text: &str) -> super::Parse<Patch> {
     let tokens = super::lex::lex(text);
     let parser = super::parse::Parser::new(tokens);
     parser.parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fix_counts_correct() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        assert!(!hunk.fix_counts());
+        assert_eq!(patch.syntax().to_string(), text);
+    }
+
+    #[test]
+    fn test_fix_counts_wrong_old() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,99 +1,2 @@\n ctx\n-old\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        assert!(hunk.fix_counts());
+        let result = patch.syntax().to_string();
+        assert!(result.contains("@@ -1,2 +1,1 @@"), "got: {result}");
+    }
+
+    #[test]
+    fn test_fix_counts_no_count_present() {
+        let text = "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new1\n+new2\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        assert!(hunk.fix_counts());
+        let result = patch.syntax().to_string();
+        assert!(result.contains("-1,1"), "got: {result}");
+        assert!(result.contains("+1,2"), "got: {result}");
+    }
+
+    #[test]
+    fn test_set_count_replace() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n ctx\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        let header = hunk.header().unwrap();
+        header.old_range().unwrap().set_count(42);
+        let result = patch.syntax().to_string();
+        assert!(result.contains("-1,42"), "got: {result}");
+    }
+
+    #[test]
+    fn test_hunk_stats() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,4 +1,5 @@\n ctx1\n ctx2\n-del\n+add1\n+add2\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        let stats = hunk.stats();
+        assert_eq!(stats.context, 2);
+        assert_eq!(stats.deletions, 1);
+        assert_eq!(stats.additions, 2);
+    }
+
+    #[test]
+    fn test_check_counts_mismatch() {
+        let text = "--- a/f\n+++ b/f\n@@ -1,99 +1,99 @@\n ctx\n-old\n+new\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let hunk = patch.patch_files().next().unwrap().hunks().next().unwrap();
+        let mismatches = hunk.header().unwrap().check_counts(&hunk);
+        assert_eq!(mismatches.len(), 2);
+        assert_eq!(mismatches[0].side, HunkSide::Old);
+        assert_eq!(mismatches[0].expected, 99);
+        assert_eq!(mismatches[0].actual, 2);
+        assert_eq!(mismatches[1].side, HunkSide::New);
+        assert_eq!(mismatches[1].expected, 99);
+        assert_eq!(mismatches[1].actual, 2);
+    }
+
+    #[test]
+    fn test_patch_file_display_name() {
+        let text = "--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-a\n+b\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let file = patch.patch_files().next().unwrap();
+        assert_eq!(file.display_name(), "a/old.txt → b/new.txt");
+    }
+
+    #[test]
+    fn test_patch_file_display_name_same() {
+        let text = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-a\n+b\n";
+        let parsed = parse(text);
+        let patch = parsed.tree_lossy();
+        let file = patch.patch_files().next().unwrap();
+        // Paths differ (a/file.txt vs b/file.txt), so shows arrow
+        assert_eq!(file.display_name(), "a/file.txt → b/file.txt");
+    }
 }
