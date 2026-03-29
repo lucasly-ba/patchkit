@@ -1,11 +1,11 @@
 //! Comprehensive tests for the quilt series lossless parser and editor
 
-use crate::edit::quilt::{self, SeriesFile};
+use crate::edit::series::{self, SeriesFile};
 use rowan::ast::AstNode;
 
 #[test]
 fn test_parse_empty_file() {
-    let parsed = quilt::parse("");
+    let parsed = series::parse("");
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
     assert_eq!(series.entries().count(), 0);
@@ -13,7 +13,7 @@ fn test_parse_empty_file() {
 
 #[test]
 fn test_parse_whitespace_only() {
-    let parsed = quilt::parse("   \n\t\n  \n");
+    let parsed = series::parse("   \n\t\n  \n");
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
     assert_eq!(series.patch_entries().count(), 0);
@@ -22,7 +22,7 @@ fn test_parse_whitespace_only() {
 #[test]
 fn test_parse_comments_only() {
     let text = "# First comment\n# Second comment\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
 
@@ -35,7 +35,7 @@ fn test_parse_comments_only() {
 #[test]
 fn test_parse_patches_with_various_options() {
     let text = "patch1.patch\npatch2.patch -p1\npatch3.patch -p2 --reverse --fuzz=3\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
 
@@ -69,7 +69,7 @@ CVE-2023-5678.patch -p2 --fuzz=2
 # Backports
 backport-upstream-fix.patch
 "#;
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
 
@@ -83,7 +83,7 @@ backport-upstream-fix.patch
 #[test]
 fn test_preserve_formatting() {
     let text = "patch1.patch  \t-p1   \t--reverse\n# Comment with   spaces\npatch2.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let series = parsed.quilt_tree();
     assert_eq!(series.syntax().to_string(), text);
 }
@@ -91,7 +91,7 @@ fn test_preserve_formatting() {
 #[test]
 fn test_thread_safety() {
     let text = "patch1.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
 
     // Test that we can clone the green node
     let green1 = parsed.green().clone();
@@ -107,7 +107,7 @@ fn test_thread_safety() {
 #[test]
 fn test_edit_insert_first() {
     let text = "patch2.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let mut series = parsed.quilt_tree_mut();
 
     series.insert(0, "patch1.patch", Vec::<&str>::new());
@@ -121,7 +121,7 @@ fn test_edit_insert_first() {
 #[test]
 fn test_edit_insert_last() {
     let text = "patch1.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let mut series = parsed.quilt_tree_mut();
 
     series.insert(1, "patch2.patch", vec!["-p1".to_string()]);
@@ -136,7 +136,7 @@ fn test_edit_insert_last() {
 #[test]
 fn test_edit_remove_preserves_comments() {
     let text = "# Header\npatch1.patch\n# Middle\npatch2.patch\n# Footer\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let mut series = parsed.quilt_tree_mut();
 
     assert!(series.remove("patch1.patch"));
@@ -152,7 +152,7 @@ fn test_edit_remove_preserves_comments() {
 #[test]
 fn test_edit_update_options() {
     let text = "patch1.patch -p1\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let mut series = parsed.quilt_tree_mut();
 
     assert!(series.set_options(
@@ -167,7 +167,7 @@ fn test_edit_update_options() {
 #[test]
 fn test_edit_chain_operations() {
     let text = "patch1.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let mut series = parsed.quilt_tree_mut();
 
     series.insert(1, "patch2.patch", vec!["-p1".to_string()]);
@@ -189,7 +189,7 @@ fn test_edit_chain_operations() {
 fn test_error_recovery() {
     // Even with malformed input, we should get a best-effort parse
     let text = "patch1.patch\n\n  \npatch2.patch -p1\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     let series = parsed.quilt_tree();
 
     let patches: Vec<_> = series.patch_entries().collect();
@@ -199,7 +199,7 @@ fn test_error_recovery() {
 #[test]
 fn test_special_patch_names() {
     let text = "debian/patches/fix-build.patch -p1\n../other/patch.diff\nCVE-2023-1234.patch\n";
-    let parsed = quilt::parse(text);
+    let parsed = series::parse(text);
     assert!(parsed.errors().is_empty());
     let series = parsed.quilt_tree();
 
@@ -215,7 +215,7 @@ fn test_special_patch_names() {
 
 #[test]
 fn test_builder_comprehensive() {
-    let series = quilt::SeriesBuilder::new()
+    let series = series::SeriesBuilder::new()
         .add_comment("Debian patch series for package foo")
         .add_comment("")
         .add_patch("debian/patches/01-fix-build.patch", vec!["-p1".to_string()])

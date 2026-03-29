@@ -1,36 +1,42 @@
 //! Parser for quilt series files
-use crate::edit::quilt::lex::{Lexer, SyntaxKind};
-use crate::edit::quilt::lossless::SeriesFile;
-use rowan::{GreenNode, GreenNodeBuilder};
+use crate::edit::series::lex::{Lexer, SyntaxKind};
+use crate::edit::series::lossless::SeriesFile;
+use crate::edit::PositionedParseError;
+use rowan::{GreenNode, GreenNodeBuilder, TextSize};
 
-pub fn parse_series(text: &str) -> crate::parse::Parse<SeriesFile> {
+/// Parse a quilt series file into a lossless AST
+pub fn parse_series(text: &str) -> crate::edit::Parse<SeriesFile> {
     let mut lexer = Lexer::new(text);
     let tokens = lexer.tokenize();
     let parser = Parser::new(&tokens);
 
-    let (green, errors) = parser.parse();
+    let (green, errors, positioned_errors) = parser.parse();
 
-    crate::parse::Parse::new(green, errors)
+    crate::edit::Parse::new_with_positioned_errors(green, errors, positioned_errors)
 }
 
 struct Parser<'a> {
-    tokens: &'a [(SyntaxKind, String)],
+    tokens: &'a [(SyntaxKind, &'a str)],
     pos: usize,
     builder: GreenNodeBuilder<'static>,
     errors: Vec<String>,
+    positioned_errors: Vec<PositionedParseError>,
+    text_pos: TextSize,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [(SyntaxKind, String)]) -> Self {
+    fn new(tokens: &'a [(SyntaxKind, &'a str)]) -> Self {
         Self {
             tokens,
             pos: 0,
             builder: GreenNodeBuilder::new(),
             errors: Vec::new(),
+            positioned_errors: Vec::new(),
+            text_pos: TextSize::from(0),
         }
     }
 
-    fn parse(mut self) -> (GreenNode, Vec<String>) {
+    fn parse(mut self) -> (GreenNode, Vec<String>, Vec<PositionedParseError>) {
         self.builder.start_node(SyntaxKind::ROOT.into());
 
         while !self.at_end() {
@@ -44,7 +50,7 @@ impl<'a> Parser<'a> {
         }
 
         self.builder.finish_node();
-        (self.builder.finish(), self.errors)
+        (self.builder.finish(), self.errors, self.positioned_errors)
     }
 
     fn parse_entry(&mut self) {
@@ -164,6 +170,7 @@ impl<'a> Parser<'a> {
     fn consume(&mut self) {
         if let Some((kind, text)) = self.tokens.get(self.pos) {
             self.builder.token((*kind).into(), text);
+            self.text_pos += TextSize::of(*text);
             self.pos += 1;
         }
     }
@@ -188,6 +195,11 @@ impl<'a> Parser<'a> {
 
     fn error(&mut self, message: &str) {
         self.errors.push(message.to_string());
+        let pos = self.text_pos;
+        self.positioned_errors.push(PositionedParseError {
+            message: message.to_string(),
+            position: rowan::TextRange::new(pos, pos),
+        });
     }
 }
 

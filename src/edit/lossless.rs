@@ -1,7 +1,6 @@
 //! Lossless AST structures for patch files
 use crate::edit::lex::SyntaxKind;
 use rowan::{ast::AstNode, SyntaxNode, SyntaxToken};
-use std::fmt;
 
 /// Language definition for patch file syntax
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,32 +35,7 @@ pub enum DiffFormat {
     Normal,
 }
 
-/// Parse error containing a list of error messages
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ParseError(pub Vec<String>);
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, err) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, "\n")?;
-            }
-            write!(f, "{}", err)?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-/// Parse error with position information
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionedParseError {
-    /// The error message
-    pub message: String,
-    /// The position in the source text where the error occurred
-    pub position: rowan::TextRange,
-}
+pub use super::{ParseError, PositionedParseError};
 
 macro_rules! ast_node {
     ($name:ident, $kind:expr) => {
@@ -483,7 +457,7 @@ impl NormalHunk {
 }
 
 /// Parse a patch file from text
-pub fn parse(text: &str) -> crate::parse::Parse<Patch> {
+pub fn parse(text: &str) -> super::Parse<Patch> {
     let tokens = super::lex::lex(text);
     let parser = super::parse::Parser::new(tokens);
     parser.parse()

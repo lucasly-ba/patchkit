@@ -24,13 +24,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(mut self) -> crate::parse::Parse<Patch> {
+    pub fn parse(mut self) -> super::Parse<Patch> {
         self.builder.start_node(SyntaxKind::ROOT.into());
         self.parse_patch();
         self.builder.finish_node();
 
         let green = self.builder.finish();
-        crate::parse::Parse::new_with_positioned_errors(green, self.errors, self.positioned_errors)
+        super::Parse::new_with_positioned_errors(green, self.errors, self.positioned_errors)
     }
 
     fn parse_patch(&mut self) {

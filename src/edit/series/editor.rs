@@ -1,7 +1,7 @@
 //! Editor implementation for quilt series files
 
-use crate::edit::quilt::lex::SyntaxKind;
-use crate::edit::quilt::lossless::{QuiltLang, SeriesEntry, SeriesFile};
+use crate::edit::series::lex::SyntaxKind;
+use crate::edit::series::lossless::{SeriesEntry, SeriesFile, SeriesLang};
 use rowan::{ast::AstNode, GreenNodeBuilder, NodeOrToken};
 
 impl SeriesFile {
@@ -48,7 +48,7 @@ impl SeriesFile {
             .collect();
         // Build just the new patch entry (minimal allocation)
         let new_entry_green = Self::build_patch_entry_green(name, &options);
-        let new_entry_syntax = rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_entry_green);
+        let new_entry_syntax = rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_entry_green);
         let new_element = NodeOrToken::Node(new_entry_syntax);
 
         // Find the insertion point by counting patch entries
@@ -114,7 +114,7 @@ impl SeriesFile {
                             // Build replacement entry
                             let new_entry_green = Self::build_patch_entry_green(name, &new_options);
                             let new_entry_syntax =
-                                rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_entry_green);
+                                rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_entry_green);
                             let new_element = NodeOrToken::Node(new_entry_syntax);
 
                             // Replace this single element using splice_children
@@ -133,7 +133,7 @@ impl SeriesFile {
         let text = text.as_ref();
         // Build just the new comment entry
         let new_comment_green = Self::build_comment_entry_green(text);
-        let new_comment_syntax = rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_comment_green);
+        let new_comment_syntax = rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_comment_green);
         let new_element = NodeOrToken::Node(new_comment_syntax);
 
         // Append at the end
@@ -156,7 +156,7 @@ impl SeriesFile {
                             // Build replacement entry with new name
                             let new_entry_green = Self::build_patch_entry_green(new_name, &options);
                             let new_entry_syntax =
-                                rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_entry_green);
+                                rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_entry_green);
                             let new_element = NodeOrToken::Node(new_entry_syntax);
 
                             // Replace using splice_children
@@ -216,7 +216,7 @@ impl SeriesFile {
 
             // Insert at new position
             let new_entry_green = Self::build_patch_entry_green(name, &patch_options);
-            let new_entry_syntax = rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_entry_green);
+            let new_entry_syntax = rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_entry_green);
             let new_element = NodeOrToken::Node(new_entry_syntax);
 
             self.syntax()
@@ -232,7 +232,7 @@ impl SeriesFile {
         let text = text.as_ref();
         // Build the new comment entry
         let new_comment_green = Self::build_comment_entry_green(text);
-        let new_comment_syntax = rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_comment_green);
+        let new_comment_syntax = rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_comment_green);
         let new_element = NodeOrToken::Node(new_comment_syntax);
 
         // Find the insertion point by counting all entries
@@ -308,7 +308,7 @@ impl SeriesFile {
                                 let new_entry_green =
                                     Self::build_patch_entry_green(&name, &new_options);
                                 let new_entry_syntax =
-                                    rowan::SyntaxNode::<QuiltLang>::new_root_mut(new_entry_green);
+                                    rowan::SyntaxNode::<SeriesLang>::new_root_mut(new_entry_green);
                                 modifications.push((i, NodeOrToken::Node(new_entry_syntax)));
                             }
                         }
@@ -456,12 +456,12 @@ impl SeriesFile {
 
 #[cfg(test)]
 mod tests {
-    use crate::edit::quilt;
+    use crate::edit::series;
 
     #[test]
     fn test_insert() {
         let text = "patch1.patch\npatch2.patch\n";
-        let parsed = quilt::parse(text);
+        let parsed = series::parse(text);
         let mut series = parsed.quilt_tree_mut();
 
         series.insert(1, "new.patch", ["-p1"]);
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_remove_patch() {
         let text = "patch1.patch\npatch2.patch\npatch3.patch\n";
-        let parsed = quilt::parse(text);
+        let parsed = series::parse(text);
         let mut series = parsed.quilt_tree_mut();
 
         assert!(series.remove("patch2.patch"));
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn test_collection_api() {
         let text = "patch1.patch\npatch2.patch\n";
-        let parsed = quilt::parse(text);
+        let parsed = series::parse(text);
         let mut series = parsed.quilt_tree_mut();
 
         // Test collection methods

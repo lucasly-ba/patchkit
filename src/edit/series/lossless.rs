@@ -1,13 +1,12 @@
 //! Lossless AST structures for quilt series files
-use crate::edit::quilt::lex::SyntaxKind;
+use crate::edit::series::lex::SyntaxKind;
 use rowan::{ast::AstNode, GreenNode, SyntaxNode, SyntaxToken};
-use std::fmt;
 
 /// Language definition for quilt series file syntax
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum QuiltLang {}
+pub enum SeriesLang {}
 
-impl rowan::Language for QuiltLang {
+impl rowan::Language for SeriesLang {
     type Kind = SyntaxKind;
 
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
@@ -21,51 +20,26 @@ impl rowan::Language for QuiltLang {
 }
 
 /// Syntax element type for quilt series files
-pub type SyntaxElement = rowan::SyntaxElement<QuiltLang>;
+pub type SyntaxElement = rowan::SyntaxElement<SeriesLang>;
 
-/// Parse error containing a list of error messages
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ParseError(pub Vec<String>);
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, err) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, "\n")?;
-            }
-            write!(f, "{}", err)?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-/// Parse error with position information
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionedParseError {
-    /// The error message
-    pub message: String,
-    /// The position in the source text where the error occurred
-    pub position: rowan::TextRange,
-}
+pub use crate::edit::{ParseError, PositionedParseError};
 
 macro_rules! ast_node {
     ($name:ident, $kind:expr) => {
         #[doc = concat!("AST node for ", stringify!($name))]
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub struct $name {
-            syntax: SyntaxNode<QuiltLang>,
+            syntax: SyntaxNode<SeriesLang>,
         }
 
         impl AstNode for $name {
-            type Language = QuiltLang;
+            type Language = SeriesLang;
 
             fn can_cast(kind: SyntaxKind) -> bool {
                 kind == $kind
             }
 
-            fn cast(syntax: SyntaxNode<QuiltLang>) -> Option<Self> {
+            fn cast(syntax: SyntaxNode<SeriesLang>) -> Option<Self> {
                 if Self::can_cast(syntax.kind()) {
                     Some(Self { syntax })
                 } else {
@@ -73,7 +47,7 @@ macro_rules! ast_node {
                 }
             }
 
-            fn syntax(&self) -> &SyntaxNode<QuiltLang> {
+            fn syntax(&self) -> &SyntaxNode<SeriesLang> {
                 &self.syntax
             }
         }
@@ -158,7 +132,7 @@ impl PatchEntry {
     }
 
     /// Get the patch name token
-    pub fn name_token(&self) -> Option<SyntaxToken<QuiltLang>> {
+    pub fn name_token(&self) -> Option<SyntaxToken<SeriesLang>> {
         self.syntax()
             .children_with_tokens()
             .filter_map(|it| it.into_token())
@@ -261,6 +235,6 @@ impl OptionItem {
 }
 
 /// Parse a quilt series file into a lossless AST
-pub fn parse(text: &str) -> crate::parse::Parse<SeriesFile> {
-    crate::edit::quilt::parse::parse_series(text)
+pub fn parse(text: &str) -> crate::edit::Parse<SeriesFile> {
+    crate::edit::series::parse::parse_series(text)
 }
