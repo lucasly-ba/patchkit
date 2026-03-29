@@ -37,9 +37,12 @@ pub use lossless::{
     // Unified diff types
     FileHeader,
     Hunk,
+    HunkCountMismatch,
     HunkHeader,
     HunkLine,
     HunkRange,
+    HunkSide,
+    HunkStats,
     Lang,
     NewFile,
     NormalChangeCommand,

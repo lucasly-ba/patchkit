@@ -165,6 +165,38 @@ impl PatchFile {
         self.syntax().children().find_map(NewFile::cast)
     }
 
+    /// Get the old file path.
+    pub fn old_path(&self) -> Option<String> {
+        self.old_file()
+            .and_then(|f| f.path())
+            .map(|t| t.text().to_string())
+    }
+
+    /// Get the new file path.
+    pub fn new_path(&self) -> Option<String> {
+        self.new_file()
+            .and_then(|f| f.path())
+            .map(|t| t.text().to_string())
+    }
+
+    /// Get the file path, preferring the new file name.
+    pub fn path(&self) -> Option<String> {
+        self.new_path().or_else(|| self.old_path())
+    }
+
+    /// Get a display name for this file diff.
+    ///
+    /// Shows "old → new" if the paths differ, otherwise just the path.
+    pub fn display_name(&self) -> String {
+        match (self.old_path(), self.new_path()) {
+            (Some(o), Some(n)) if o == n => o,
+            (Some(o), Some(n)) => format!("{o} → {n}"),
+            (Some(o), None) => o,
+            (None, Some(n)) => n,
+            (None, None) => "<unknown>".to_string(),
+        }
+    }
+
     /// Get all hunks in this patch file
     pub fn hunks(&self) -> impl Iterator<Item = Hunk> {
         self.syntax().children().filter_map(Hunk::cast)
@@ -191,6 +223,17 @@ impl NewFile {
     }
 }
 
+/// Line count statistics for a hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HunkStats {
+    /// Number of context (unchanged) lines
+    pub context: u32,
+    /// Number of added lines
+    pub additions: u32,
+    /// Number of deleted lines
+    pub deletions: u32,
+}
+
 impl Hunk {
     /// Get the hunk header
     pub fn header(&self) -> Option<HunkHeader> {
@@ -199,17 +242,32 @@ impl Hunk {
 
     /// Get all lines in this hunk
     pub fn lines(&self) -> impl Iterator<Item = HunkLine> {
-        // HunkLine is not a real syntax kind - the actual kinds are CONTEXT_LINE, ADD_LINE, DELETE_LINE
-        // But they all share the same structure, so we can cast any of them as HunkLine
-        self.syntax().children().filter_map(|child| {
-            match child.kind() {
+        self.syntax()
+            .children()
+            .filter_map(|child| match child.kind() {
                 SyntaxKind::CONTEXT_LINE | SyntaxKind::ADD_LINE | SyntaxKind::DELETE_LINE => {
-                    // These line types all have the same structure, cast them as HunkLine
                     Some(HunkLine { syntax: child })
                 }
                 _ => None,
+            })
+    }
+
+    /// Count the lines in this hunk by type.
+    pub fn stats(&self) -> HunkStats {
+        let mut stats = HunkStats {
+            context: 0,
+            additions: 0,
+            deletions: 0,
+        };
+        for line in self.lines() {
+            match line.syntax().kind() {
+                SyntaxKind::CONTEXT_LINE => stats.context += 1,
+                SyntaxKind::ADD_LINE => stats.additions += 1,
+                SyntaxKind::DELETE_LINE => stats.deletions += 1,
+                _ => {}
             }
-        })
+        }
+        stats
     }
 }
 
@@ -222,6 +280,72 @@ impl HunkHeader {
     /// Get the new file range for this hunk
     pub fn new_range(&self) -> Option<HunkRange> {
         self.syntax().children().filter_map(HunkRange::cast).nth(1)
+    }
+}
+
+/// Which side of a diff hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HunkSide {
+    /// The old (original) side
+    Old,
+    /// The new (modified) side
+    New,
+}
+
+impl std::fmt::Display for HunkSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HunkSide::Old => write!(f, "old"),
+            HunkSide::New => write!(f, "new"),
+        }
+    }
+}
+
+/// A mismatch between a hunk header's declared line count and the actual count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkCountMismatch {
+    /// Which side of the diff
+    pub side: HunkSide,
+    /// The count declared in the header
+    pub expected: u32,
+    /// The actual count of lines in the hunk
+    pub actual: u32,
+}
+
+impl HunkHeader {
+    /// Check whether the declared line counts match the actual hunk content.
+    ///
+    /// Returns a list of mismatches (empty if everything matches).
+    /// Requires the parent `Hunk` node to count the lines.
+    pub fn check_counts(&self, hunk: &Hunk) -> Vec<HunkCountMismatch> {
+        let stats = hunk.stats();
+        let mut mismatches = Vec::new();
+
+        if let Some(old_range) = self.old_range() {
+            let expected = old_range.count().unwrap_or(1);
+            let actual = stats.context + stats.deletions;
+            if expected != actual {
+                mismatches.push(HunkCountMismatch {
+                    side: HunkSide::Old,
+                    expected,
+                    actual,
+                });
+            }
+        }
+
+        if let Some(new_range) = self.new_range() {
+            let expected = new_range.count().unwrap_or(1);
+            let actual = stats.context + stats.additions;
+            if expected != actual {
+                mismatches.push(HunkCountMismatch {
+                    side: HunkSide::New,
+                    expected,
+                    actual,
+                });
+            }
+        }
+
+        mismatches
     }
 }
 
