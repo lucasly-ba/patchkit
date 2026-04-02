@@ -87,7 +87,7 @@ mod find_common_patch_suffix_tests {
 }
 
 /// A entry in a series file
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeriesEntry {
     /// A patch entry
     Patch {
@@ -101,7 +101,7 @@ pub enum SeriesEntry {
 }
 
 /// A quilt series file
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Series {
     /// The entries in the series file
     pub entries: Vec<SeriesEntry>,
