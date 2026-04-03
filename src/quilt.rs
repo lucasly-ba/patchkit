@@ -146,6 +146,10 @@ impl Series {
             let line = line?;
             let line = line.trim();
 
+            if line.is_empty() {
+                continue;
+            }
+
             if line.starts_with('#') {
                 series.entries.push(SeriesEntry::Comment(line.to_string()));
                 continue;
@@ -473,6 +477,54 @@ mod tests {
                     ],
                     tail: None
                 }]
+            }
+        );
+    }
+
+    #[test]
+    fn test_series_read_empty_lines() {
+        let series = Series::read(
+            r#"0001-foo.patch
+
+0002-bar.patch
+
+"#
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(series.len(), 2);
+        assert_eq!(
+            series[0],
+            SeriesEntry::Patch {
+                name: "0001-foo.patch".to_string(),
+                options: vec![]
+            }
+        );
+        assert_eq!(
+            series[1],
+            SeriesEntry::Patch {
+                name: "0002-bar.patch".to_string(),
+                options: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn test_series_read_whitespace_lines() {
+        let series = Series::read("0001-foo.patch \n   \n0002-bar.patch\n".as_bytes()).unwrap();
+        assert_eq!(series.len(), 2);
+        assert_eq!(
+            series[0],
+            SeriesEntry::Patch {
+                name: "0001-foo.patch".to_string(),
+                options: vec![]
+            }
+        );
+        assert_eq!(
+            series[1],
+            SeriesEntry::Patch {
+                name: "0002-bar.patch".to_string(),
+                options: vec![]
             }
         );
     }
