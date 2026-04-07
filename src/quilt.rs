@@ -253,6 +253,15 @@ pub fn read_quilt_series<R: std::io::Read>(mut reader: R) -> std::path::PathBuf 
     s.into()
 }
 
+/// Patch strip options
+pub fn get_patch_strip_options() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("-p0", "No path stripping"),
+        ("-p1", "Strip 1 path component (default)"),
+        ("-p2", "Strip 2 path components"),
+    ]
+}
+
 /// A quilt patch
 pub struct QuiltPatch {
     /// The name of the patch
